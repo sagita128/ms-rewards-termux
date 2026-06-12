@@ -1,0 +1,20 @@
+{
+  "accounts": [
+    {
+      "email": "emailkamu@outlook.com",
+      "password": "password_kamu_disini"
+    },
+    {
+      "email": "email2@hotmail.com",
+      "password": "password_akun_kedua"
+    }
+  ],
+  "settings": {
+    "desktop_searches": 30,
+    "mobile_searches": 20,
+    "min_delay_sec": 10,
+    "max_delay_sec": 20,
+    "headless": true,
+    "delay_between_accounts_sec": 900
+  }
+}
