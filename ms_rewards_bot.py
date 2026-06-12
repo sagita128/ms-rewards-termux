@@ -101,6 +101,10 @@ def make_driver(device="desktop"):
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1920,1080")
+    # Unique user-data-dir biar gak tabrakan
+    uid = f"selenium_{int(time.time())}_{random.randint(1000,9999)}"
+    opts.add_argument(f"--user-data-dir=/tmp/{uid}")
+    opts.add_argument("--remote-debugging-port=0")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
 
