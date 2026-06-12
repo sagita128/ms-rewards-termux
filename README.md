@@ -1,6 +1,6 @@
 # MS Rewards Bot — Termux Edition
 
-> **Versi standalone** — terpisah dari server bot yang jalan di openclaw.  
+> **Versi standalone** — terpisah dari server bot utama.  
 > Khusus dijalankan di **Termux (Android)**. Auto jalan 24/7.
 
 ---
@@ -45,7 +45,7 @@ Buka Termux, ketik:
 ```bash
 pkg update && pkg upgrade -y
 pkg install -y git
-git clone https://github.com/BintangBot/ms-rewards-termux
+git clone https://github.com/sagita128/ms-rewards-termux
 cd ms-rewards-termux
 ```
 
