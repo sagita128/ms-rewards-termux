@@ -8,6 +8,7 @@ import re
 import json
 import logging
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def login(pw, email, password):
     """Login ke Microsoft via Playwright. Returns (browser, context, page) or None."""
     log.info(f"  🔑 Login {email}...")
     try:
-        browser = pw.chromium.launch(
+        launch_kwargs = dict(
             headless=True,
             args=[
                 "--no-sandbox",
@@ -98,6 +99,12 @@ def login(pw, email, password):
                 "--disable-blink-features=AutomationControlled",
             ],
         )
+        # Support Chromium path override via env var (untuk Termux)
+        ch_path = os.environ.get("MS_REWARDS_CHROMIUM_PATH")
+        if ch_path:
+            launch_kwargs["executable_path"] = ch_path
+            log.info(f"    📌 Chromium path: {ch_path}")
+        browser = pw.chromium.launch(**launch_kwargs)
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent=(

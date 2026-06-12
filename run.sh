@@ -9,6 +9,14 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# Auto-detect Chromium untuk Termux
+if [ -f "$PREFIX/bin/chromium" ] && [ ! -f "$HOME/.cache/ms-playwright/chromium" ]; then
+    export PLAYWRIGHT_BROWSERS_PATH=0
+    export MS_REWARDS_CHROMIUM_PATH="$PREFIX/bin/chromium"
+elif [ -d "$HOME/.cache/ms-playwright" ]; then
+    export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+fi
+
 echo "======================================"
 echo "  MS Rewards Bot — Loop Mode"
 echo "  PID: $$"
