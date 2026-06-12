@@ -109,10 +109,11 @@ def make_driver(device="desktop"):
     if ch_path:
         opts.binary_location = ch_path
     else:
-        # Auto-detect chromium binary
+        # Auto-detect chromium binary (Termux)
         for p in [
             "/data/data/com.termux/files/usr/bin/chromium",
             "/data/data/com.termux/files/usr/bin/chromium-browser",
+            "/data/data/com.termux/files/usr/lib/chromium/chrome",
         ]:
             if os.path.isfile(p):
                 opts.binary_location = p
