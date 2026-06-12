@@ -61,6 +61,9 @@ TOPICS = [
     "pendidikan", "wisata", "kuliner", "keuangan", "otomotif",
 ]
 
+# Referral URL — pake referral sendiri biar dapet bonus poin buat akun baru
+REFFERAL_URL = 'https://rewards.bing.com/welcome?rh=iQejxOqbtSA&ref=rafsrchae'
+
 # ─── Helper functions ───────────────────────────────────────
 
 def get_config():
@@ -382,6 +385,107 @@ def check_rewards(page):
         return -1
 
 
+# ─── Referral Enrollment ────────────────────────────────────
+
+def enroll_or_skip(page):
+    """Cek apakah akun udah enrolled di Rewards.
+    Kalo belum, coba daftar via referral link biar dapet bonus poin.
+    Returns True kalo sudah enrolled, False kalo belum."""
+    try:
+        page.goto('https://rewards.bing.com/', wait_until="load", timeout=45000)
+        time.sleep(10)
+
+        # Handle OAuth consent page dulu
+        oauth_clicks = 0
+        for attempt in range(15):
+            cur = page.url
+            cur_title = page.title()
+
+            # Udah di dashboard rewards!
+            if 'rewards.bing.com' in cur and 'welcome' not in cur.lower() and 'signin-oidc' not in cur.lower():
+                has_points = page.locator('[class*="text-pageHeader"]').count() > 0
+                if has_points:
+                    log.info("  ✅ Udah di dashboard rewards (points visible)")
+                else:
+                    log.info("  ✅ Udah di dashboard rewards")
+                return True
+
+            # Di halaman OAuth — coba klik "Sign in"
+            if 'login.live.com' in cur and ('oauth' in cur or 'authorize' in cur):
+                try:
+                    signin_link = page.locator('a:has-text("Sign in")').first
+                    if signin_link.is_visible(timeout=2000):
+                        log.info("  🔑 Klik 'Sign in' di halaman OAuth")
+                        signin_link.click()
+                        time.sleep(8)
+                        oauth_clicks += 1
+                        continue
+                except:
+                    pass
+                if oauth_clicks >= 5:
+                    log.info("  ⚠️ OAuth mentok 5x — coba referral enrollment...")
+                    break
+                # Coba button Accept/Continue
+                for ct in ['Accept', 'Yes', 'Continue', 'Allow']:
+                    try:
+                        btn = page.locator(f'button:has-text("{ct}"), input[value*="{ct}"]').first
+                        if btn.is_visible(timeout=2000):
+                            btn.click()
+                            log.info(f"  ✅ Klik '{ct}' di consent page")
+                            time.sleep(5)
+                            oauth_clicks += 1
+                            break
+                    except:
+                        continue
+                time.sleep(3)
+                continue
+
+            time.sleep(5)
+
+        # === REFERRAL ENROLLMENT ===
+        log.info("  📝 Coba referral enrollment...")
+        page.goto(REFFERAL_URL, wait_until="load", timeout=45000)
+        time.sleep(10)
+
+        for btn_text in ['Start earning', 'Join now', 'Join', 'Get started', 'Start', 'Sign up']:
+            try:
+                btn = page.locator(f'button:has-text("{btn_text}"), a:has-text("{btn_text}")').first
+                if btn.is_visible(timeout=3000):
+                    btn.click()
+                    log.info(f"  ✅ Klik '{btn_text}' di halaman referral")
+                    break
+            except:
+                continue
+
+        # Tunggu OAuth chain setelah klik referral
+        time.sleep(5)
+        for i in range(15):
+            time.sleep(4)
+            cur = page.url
+            if 'rewards.bing.com' in cur and 'welcome' not in cur.lower():
+                time.sleep(2)
+                if not page.url.lower().startswith('https://rewards.bing.com/'):
+                    continue
+                log.info("  ✅ Referral enrollment berhasil!")
+                return True
+            if 'login.live.com' in cur and ('oauth' in cur or 'authorize' in cur):
+                try:
+                    sl = page.locator('a:has-text("Sign in")').first
+                    if sl.is_visible(timeout=2000):
+                        sl.click()
+                        time.sleep(8)
+                        continue
+                except:
+                    pass
+            log.info(f"  ⏳ Tunggu redirect referral... ({cur[:50]})")
+
+        log.info("  ⚠️ Referral enrollment gagal — lanjut search aja")
+        return False
+    except Exception as e:
+        log.warning(f"  Enrollment error: {e}")
+        return False
+
+
 # ─── Main ──────────────────────────────────────────────────
 
 def run_bot():
@@ -423,17 +527,32 @@ def run_bot():
             account_log = []
 
             try:
-                # ── Daily set ──
+                # ── Cek enrollment ──
+                enrolled = False
                 try:
-                    ds = do_daily_set(page)
-                    account_log.append(f"Daily set: {ds}/3")
+                    enrolled = enroll_or_skip(page)
                 except Exception as e:
-                    log.warning(f"  ⚠️ Daily set error: {e}")
-                    account_log.append("Daily set: error")
+                    log.warning(f"  ⚠️ Enrollment check error: {e}")
 
-                # Recover page
-                page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
-                time.sleep(5)
+                if not enrolled:
+                    log.warning("  ⚠️ Akun belum enrolled — skip dashboard tasks, langsung search")
+                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
+                    time.sleep(5)
+                else:
+                    account_log.append("Enrolled ✅")
+
+                if enrolled:
+                    # ── Daily set ──
+                    try:
+                        ds = do_daily_set(page)
+                        account_log.append(f"Daily set: {ds}/3")
+                    except Exception as e:
+                        log.warning(f"  ⚠️ Daily set error: {e}")
+                        account_log.append("Daily set: error")
+
+                    # Recover page
+                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
+                    time.sleep(5)
 
                 # ── Desktop Searches ──
                 log.info(f"  🔍 {desktop_target} DESKTOP searches...")
@@ -483,20 +602,21 @@ def run_bot():
                 account_log.append(f"Mobile: {mobile_ok}/{mobile_target}")
 
                 # ── Claim ──
-                page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
-                time.sleep(5)
-                try:
-                    cp = claim_points(page)
-                    account_log.append(f"Claim: {'✅' if cp > 0 else 'ℹ️ none'}")
-                except Exception as e:
-                    log.warning(f"  ⚠️ Claim error: {e}")
+                if enrolled:
+                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
+                    time.sleep(5)
+                    try:
+                        cp = claim_points(page)
+                        account_log.append(f"Claim: {'✅' if cp > 0 else 'ℹ️ none'}")
+                    except Exception as e:
+                        log.warning(f"  ⚠️ Claim error: {e}")
 
-                # ── Cek Points ──
-                try:
-                    pts = check_rewards(page)
-                    account_log.append(f"Points: {pts}")
-                except:
-                    pass
+                    # ── Cek Points ──
+                    try:
+                        pts = check_rewards(page)
+                        account_log.append(f"Points: {pts}")
+                    except:
+                        pass
 
                 summary.append(f"{'✅' if mobile_ok > 0 else '⚠️'} {email} — {' | '.join(account_log)}")
 
