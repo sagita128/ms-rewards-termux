@@ -21,10 +21,21 @@ pkg install -y python git binutils
 echo "[3/5] Install Selenium..."
 pip install selenium
 
-# 4. Install Chromium
-echo "[4/5] Install Chromium browser..."
+# 4. Install Chromium + ChromeDriver
+echo "[4/5] Install Chromium browser & ChromeDriver..."
 pkg install -y x11-repo
 pkg install -y chromium
+
+# Cek chromedriver
+if command -v chromedriver &>/dev/null; then
+    echo "  ✅ ChromeDriver: $(which chromedriver)"
+elif [ -f "$PREFIX/lib/chromium/chromedriver" ]; then
+    echo "  ✅ ChromeDriver: $PREFIX/lib/chromium/chromedriver"
+    ln -sf "$PREFIX/lib/chromium/chromedriver" "$PREFIX/bin/chromedriver" 2>/dev/null || true
+else
+    echo "  ⚠️ ChromeDriver tidak ditemukan, coba install manual:"
+    echo "     pkg install chromium-chromedriver"
+fi
 
 # Auto-detect path
 if [ -f "$PREFIX/bin/chromium" ]; then

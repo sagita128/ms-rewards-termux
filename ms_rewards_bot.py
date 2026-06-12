@@ -14,6 +14,7 @@ from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -108,13 +109,20 @@ def make_driver(device="desktop"):
     if ch_path:
         opts.binary_location = ch_path
 
-    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") == "0" and not ch_path:
-        # Fallback cari chromium di PATH
-        for p in ["/data/data/com.termux/files/usr/bin/chromium",
-                   "/data/data/com.termux/files/usr/bin/chromium-browser"]:
+    # Deteksi chromedriver
+    cd_path = os.environ.get("MS_REWARDS_CHROMEDRIVER_PATH")
+    if not cd_path:
+        for p in [
+            "/data/data/com.termux/files/usr/bin/chromedriver",
+            "/data/data/com.termux/files/usr/lib/chromium/chromedriver",
+            "/data/data/com.termux/files/usr/bin/chromium-browser",
+        ]:
             if os.path.isfile(p):
-                opts.binary_location = p
+                cd_path = p
                 break
+
+    # Disable Selenium Manager (gak support android/arch64)
+    os.environ["SE_SELENIUM_MANAGER"] = "0"
 
     if device == "mobile":
         opts.add_argument("--window-size=390,844")
@@ -130,7 +138,12 @@ def make_driver(device="desktop"):
             "Chrome/125.0.0.0 Safari/537.36"
         )
 
-    driver = webdriver.Chrome(options=opts)
+    if cd_path:
+        service = Service(executable_path=cd_path)
+        driver = webdriver.Chrome(service=service, options=opts)
+    else:
+        # Fallback: biar Selenium cari di PATH (works on normal Linux, maybe not Termux)
+        driver = webdriver.Chrome(options=opts)
     driver.implicitly_wait(10)
     return driver
 
