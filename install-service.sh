@@ -28,12 +28,6 @@ cat > ~/.local/share/sv/ms-rewards/run << 'SVEOF'
 #!/data/data/com.termux/files/usr/bin/bash
 exec 2>&1
 cd /data/data/com.termux/files/home/ms-rewards-termux
-
-# Auto-detect Chromium untuk Termux (Selenium)
-if [ -f "$PREFIX/bin/chromium" ] && [ -z "$MS_REWARDS_CHROMIUM_PATH" ]; then
-    export MS_REWARDS_CHROMIUM_PATH="$PREFIX/bin/chromium"
-fi
-
 exec python ms_rewards_bot.py
 SVEOF
 chmod +x ~/.local/share/sv/ms-rewards/run
