@@ -108,6 +108,15 @@ def make_driver(device="desktop"):
     ch_path = os.environ.get("MS_REWARDS_CHROMIUM_PATH")
     if ch_path:
         opts.binary_location = ch_path
+    else:
+        # Auto-detect chromium binary
+        for p in [
+            "/data/data/com.termux/files/usr/bin/chromium",
+            "/data/data/com.termux/files/usr/bin/chromium-browser",
+        ]:
+            if os.path.isfile(p):
+                opts.binary_location = p
+                break
 
     # Deteksi chromedriver
     cd_path = os.environ.get("MS_REWARDS_CHROMEDRIVER_PATH")
