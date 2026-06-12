@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
-"""MS Rewards Bot for Termux — Playwright browser, multi-account, 24/7.
-Optimized for Android/Termux: no proxy, simpler, Indonesian logging.
-Just isi config.json, jalanin setup.sh, done."""
+#!/data/data/com.termux/files/usr/bin/python3
+"""MS Rewards Bot for Termux — Selenium + Chromium, multi-account, 24/7.
+Optimized for Android/Termux (no proxy, Indonesian logging).
+Ganti Playwright -> Selenium karena Playwright gak support Termux/aarch64."""
 import time
 import random
 import re
@@ -12,7 +12,13 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 # ─── Config ────────────────────────────────────────────────
 BASE = Path(__file__).parent
@@ -62,8 +68,9 @@ TOPICS = [
     "pendidikan", "wisata", "kuliner", "keuangan", "otomotif",
 ]
 
-# Referral URL — pake referral sendiri biar dapet bonus poin buat akun baru
+# Referral URL
 REFFERAL_URL = 'https://rewards.bing.com/welcome?rh=iQejxOqbtSA&ref=rafsrchae'
+
 
 # ─── Helper functions ───────────────────────────────────────
 
@@ -85,186 +92,224 @@ def write_last_run(text):
     )
 
 
+def make_driver(device="desktop"):
+    """Buat Chrome WebDriver. device='desktop' atau 'mobile'."""
+    opts = Options()
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option("useAutomationExtension", False)
+
+    # Chromium path untuk Termux
+    ch_path = os.environ.get("MS_REWARDS_CHROMIUM_PATH")
+    if ch_path:
+        opts.binary_location = ch_path
+
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") == "0" and not ch_path:
+        # Fallback cari chromium di PATH
+        for p in ["/data/data/com.termux/files/usr/bin/chromium",
+                   "/data/data/com.termux/files/usr/bin/chromium-browser"]:
+            if os.path.isfile(p):
+                opts.binary_location = p
+                break
+
+    if device == "mobile":
+        opts.add_argument("--window-size=390,844")
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (Linux; Android 14; SM-S928B) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.6422.165 Mobile Safari/537.36"
+        )
+    else:
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        )
+
+    driver = webdriver.Chrome(options=opts)
+    driver.implicitly_wait(10)
+    return driver
+
+
+def safe_find(driver, selector, timeout=15, by=By.CSS_SELECTOR):
+    """Wait untuk element, return element atau None."""
+    try:
+        return WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((by, selector))
+        )
+    except (TimeoutException, NoSuchElementException):
+        return None
+
+
+def safe_click(driver, selector, timeout=10, by=By.CSS_SELECTOR):
+    """Click element kalo ada, return True/False."""
+    el = safe_find(driver, selector, timeout, by)
+    if el:
+        try:
+            el.click()
+            return True
+        except Exception:
+            try:
+                driver.execute_script("arguments[0].click()", el)
+                return True
+            except:
+                pass
+    return False
+
+
+def safe_click_text(driver, text, timeout=10):
+    """Click element by visible text."""
+    try:
+        el = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, f"//*[text()='{text}']"))
+        )
+        el.click()
+        return True
+    except:
+        pass
+    # Fallback: partial text
+    try:
+        el = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, f"//*[contains(text(), '{text}')]"))
+        )
+        el.click()
+        return True
+    except:
+        return False
+
+
 # ─── Login ──────────────────────────────────────────────────
 
-def login(pw, email, password):
-    """Login ke Microsoft via Playwright. Returns (browser, context, page) or None."""
+def login(driver, email, password):
+    """Login ke Microsoft via Selenium."""
     log.info(f"  🔑 Login {email}...")
     try:
-        launch_kwargs = dict(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-        # Support Chromium path override via env var (untuk Termux)
-        ch_path = os.environ.get("MS_REWARDS_CHROMIUM_PATH")
-        if ch_path:
-            launch_kwargs["executable_path"] = ch_path
-            log.info(f"    📌 Chromium path: {ch_path}")
-        browser = pw.chromium.launch(**launch_kwargs)
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-        )
-        page = context.new_page()
-        page.set_default_timeout(30000)
-
-        # Buka login page
-        page.goto("https://login.live.com/", wait_until="domcontentloaded", timeout=60000)
+        driver.get("https://login.live.com/")
         time.sleep(6)
 
         # Email
-        email_input = page.wait_for_selector(
-            "#usernameEntry, input[name='loginfmt'], input[type='email']", timeout=15000
-        )
-        email_input.fill(email)
+        email_input = safe_find(driver, "#usernameEntry, input[name='loginfmt'], input[type='email']", timeout=15)
+        if not email_input:
+            log.warning("  ❌ Email input not found")
+            return False
+        email_input.clear()
+        email_input.send_keys(email)
         time.sleep(1)
-        page.keyboard.press("Enter")
+        email_input.send_keys(Keys.RETURN)
         time.sleep(4)
 
-        # "Use your password" link (klik kalo ada)
-        try:
-            if page.locator('text="Use your password"').is_visible(timeout=3000):
-                page.click('text="Use your password"', timeout=6000)
-                log.info("    📝 Klik 'Use your password'")
-                time.sleep(3)
-        except:
-            pass
+        # "Use your password" link
+        safe_click_text(driver, "Use your password", timeout=3)
 
         # Password
-        pwd_input = page.wait_for_selector(
-            '#passwordEntry, input[name="passwd"], input[type="password"]', timeout=10000
-        )
-        pwd_input.fill(password)
+        pwd_input = safe_find(driver, '#passwordEntry, input[name="passwd"], input[type="password"]', timeout=10)
+        if not pwd_input:
+            log.warning("  ❌ Password input not found")
+            return False
+        pwd_input.clear()
+        pwd_input.send_keys(password)
         time.sleep(1)
-        page.keyboard.press("Enter")
+        pwd_input.send_keys(Keys.RETURN)
         time.sleep(6)
 
         # Handle post-login redirects
         for _ in range(6):
-            title = page.title().lower()
-            url = page.url
+            title = driver.title.lower()
+            url = driver.current_url
             if "stay" in title or "signed in" in title:
-                page.evaluate(
-                    """() => {
-                        for (const b of document.querySelectorAll('button')) {
-                            if (b.textContent.trim().toLowerCase() === 'no') { b.click(); break; }
-                        }
-                    }"""
-                )
+                driver.execute_script("""
+                    for (const b of document.querySelectorAll('button')) {
+                        if (b.textContent.trim().toLowerCase() === 'no') { b.click(); break; }
+                    }
+                """)
                 log.info("    👋 Klik 'No' (stay signed in)")
                 time.sleep(3)
             elif "copilot" in url or "sso" in url or "login.live.com" in url:
-                page.goto("https://www.bing.com/", wait_until="domcontentloaded", timeout=30000)
+                driver.get("https://www.bing.com/")
                 time.sleep(4)
                 break
             else:
                 break
             time.sleep(2)
 
-        # Verifikasi login
-        page.goto("https://www.bing.com/", wait_until="domcontentloaded", timeout=30000)
+        # Verifikasi
+        driver.get("https://www.bing.com/")
         time.sleep(5)
-        if "id_n" in page.content():
+        if "id_n" in driver.page_source:
             log.info("  ✅ Login berhasil!")
-            return browser, context, page
+            return True
         else:
             log.warning("  ⚠️ Login tidak terverifikasi (id_n not found)")
-            browser.close()
-            return None
+            return False
 
     except Exception as e:
         log.error(f"  ❌ Login gagal: {e}")
-        try:
-            browser.close()
-        except:
-            pass
-        return None
+        return False
 
 
 # ─── Daily Set ─────────────────────────────────────────────
 
-def do_daily_set(page):
+def do_daily_set(driver):
     """Klik daily set cards di dashboard rewards."""
     log.info("  📋 Daily set...")
     try:
-        page.goto("https://rewards.bing.com/", wait_until="domcontentloaded", timeout=45000)
+        driver.get("https://rewards.bing.com/")
         time.sleep(12)
 
-        # Scroll untuk trigger lazy load
+        # Scroll
         for _ in range(4):
-            page.evaluate("window.scrollBy(0, 500)")
+            driver.execute_script("window.scrollBy(0, 500)")
             time.sleep(1)
 
-        # Cari section daily set
-        page.evaluate(
+        driver.execute_script(
             "document.getElementById('dailyset')?.scrollIntoView({behavior:'smooth'})"
         )
         time.sleep(3)
 
-        # Cari cards — retry beberapa kali
+        # Cari cards
         cards = None
         for attempt in range(3):
-            section = page.locator("#dailyset")
-            cards = section.locator('a[href*="bing.com"]')
-            if cards.count() > 0:
-                break
+            try:
+                section = driver.find_element(By.ID, "dailyset")
+                cards = section.find_elements(By.CSS_SELECTOR, 'a[href*="bing.com"]')
+                if cards:
+                    break
+            except:
+                pass
             log.info(f"    ⏳ Menunggu daily set cards... ({attempt + 1}/3)")
             time.sleep(5)
 
-        if not cards or cards.count() == 0:
+        if not cards or len(cards) == 0:
             log.info("  ℹ️ Tidak ada daily set cards")
             return 0
 
         completed = 0
-        for i in range(min(cards.count(), 3)):
-            card = cards.nth(i)
+        for i in range(min(len(cards), 3)):
             try:
-                card.scroll_into_view_if_needed()
+                card = cards[i]
+                driver.execute_script("arguments[0].scrollIntoView(true);", card)
                 time.sleep(1)
-                # JS dispatchEvent — wajib untuk React handlers
-                page.evaluate(
-                    """(el) => {
-                        el.removeAttribute('target');
-                        el.dispatchEvent(
-                            new MouseEvent('click', {bubbles: true, cancelable: true})
-                        );
-                    }""",
-                    card.element_handle(),
-                )
+                # JS click for React handlers
+                driver.execute_script("""
+                    arguments[0].removeAttribute('target');
+                    arguments[0].dispatchEvent(
+                        new MouseEvent('click', {bubbles: true, cancelable: true})
+                    );
+                """, card)
                 log.info(f"  ✅ Daily task {i + 1} clicked")
                 completed += 1
                 time.sleep(8)
 
-                # Tutup tab baru kalo ada
-                if len(page.context.pages) > 1:
-                    page.context.pages[-1].close()
-                    time.sleep(2)
-
                 # Kembali ke dashboard
-                page.goto("https://rewards.bing.com/", wait_until="domcontentloaded", timeout=30000)
+                driver.get("https://rewards.bing.com/")
                 time.sleep(10)
 
             except Exception as e:
-                if "Execution context was destroyed" in str(e):
-                    # Context destroyed = click SUCCESS (navigasi terjadi)
-                    log.info(f"  ✅ Daily task {i + 1} clicked (navigasi terdeteksi)")
-                    completed += 1
-                    time.sleep(8)
-                    page.goto(
-                        "https://rewards.bing.com/", wait_until="domcontentloaded", timeout=30000
-                    )
-                    time.sleep(10)
-                else:
-                    log.warning(f"  ⚠️ Daily task {i + 1} error: {e}")
+                log.warning(f"  ⚠️ Daily task {i + 1} error: {e}")
 
         log.info(f"  Daily set: {completed}/3")
         return completed
@@ -275,39 +320,41 @@ def do_daily_set(page):
 
 # ─── Bing Search ────────────────────────────────────────────
 
-def do_browser_search(page, query):
+def do_browser_search(driver, query):
     """Lakukan satu pencarian Bing via browser."""
     try:
-        sb = page.wait_for_selector("#sb_form_q", timeout=10000)
+        sb = safe_find(driver, "#sb_form_q", timeout=10)
         if not sb:
             raise Exception("Search box not found")
-        sb.fill("")
+        sb.clear()
         time.sleep(0.3)
         for ch in query:
-            sb.type(ch, delay=random.randint(30, 80))
+            sb.send_keys(ch)
+            time.sleep(random.uniform(0.03, 0.08))
         time.sleep(0.5)
-        page.keyboard.press("Enter")
+        sb.send_keys(Keys.RETURN)
         time.sleep(random.uniform(4, 7))
         try:
-            page.evaluate("window.scrollBy(0, Math.random() * 400 + 100)")
+            driver.execute_script("window.scrollBy(0, Math.random() * 400 + 100)")
         except:
             pass
         time.sleep(random.uniform(1, 3))
         return True
     except Exception as e:
         log.debug(f"  Search error: {e}")
-        # Retry: reload Bing dan coba lagi
+        # Retry
         try:
-            page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
+            driver.get("https://www.bing.com/")
             time.sleep(4)
-            sb = page.wait_for_selector("#sb_form_q", timeout=8000)
+            sb = safe_find(driver, "#sb_form_q", timeout=8)
             if sb:
-                sb.fill("")
+                sb.clear()
                 time.sleep(0.3)
                 for ch in query:
-                    sb.type(ch, delay=random.randint(30, 80))
+                    sb.send_keys(ch)
+                    time.sleep(random.uniform(0.03, 0.08))
                 time.sleep(0.5)
-                page.keyboard.press("Enter")
+                sb.send_keys(Keys.RETURN)
                 time.sleep(random.uniform(4, 7))
                 return True
         except:
@@ -317,34 +364,30 @@ def do_browser_search(page, query):
 
 # ─── Claim Points ──────────────────────────────────────────
 
-def claim_points(page):
+def claim_points(driver):
     """Claim 'Ready to claim' points."""
     log.info("  🎁 Claim points...")
     try:
-        page.goto("https://rewards.bing.com/", wait_until="load", timeout=45000)
+        driver.get("https://rewards.bing.com/")
         time.sleep(12)
-
         claimed = 0
+
+        # Cari tombol "Ready to claim"
         try:
-            claim_card = page.locator("button", has_text="Ready to claim").first
-            if claim_card.is_visible(timeout=5000):
-                claim_card.click()
-                log.info("  🖱️ Klik 'Ready to claim'")
-                time.sleep(5)
+            claim_card = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Ready to claim')]"))
+            )
+            claim_card.click()
+            log.info("  🖱️ Klik 'Ready to claim'")
+            time.sleep(5)
 
-                claim_btn = page.locator("button", has_text="Claim points").first
-                if claim_btn.is_visible(timeout=5000):
-                    claim_btn.click()
-                    claimed += 1
-                    log.info("  ✅ Points claimed!")
-                    time.sleep(3)
-
-                # Tutup modal
-                try:
-                    page.keyboard.press("Escape")
-                    time.sleep(2)
-                except:
-                    pass
+            claim_btn = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Claim points')]"))
+            )
+            claim_btn.click()
+            claimed += 1
+            log.info("  ✅ Points claimed!")
+            time.sleep(3)
         except:
             pass
 
@@ -358,18 +401,18 @@ def claim_points(page):
 
 # ─── Check Points ──────────────────────────────────────────
 
-def check_rewards(page):
+def check_rewards(driver):
     """Cek poin yang tersedia."""
     try:
-        page.goto("https://rewards.bing.com/", wait_until="load", timeout=45000)
+        driver.get("https://rewards.bing.com/")
         time.sleep(10)
+        body = driver.find_element(By.TAG_NAME, "body").text
 
-        body = page.inner_text("body")
-        # Cari angka standalone dengan class text-pageHeader
+        # Cari angka dengan class tertentu
         try:
-            pts_el = page.locator('[class*="text-pageHeader"]').first
-            pts_text = pts_el.inner_text(timeout=3000)
-            match = re.match(r"^(\d{1,4}(?:,\d{3})*)$", pts_text.strip())
+            pts_el = driver.find_element(By.CSS_SELECTOR, '[class*="text-pageHeader"]')
+            pts_text = pts_el.text.strip()
+            match = re.match(r"^(\d{1,4}(?:,\d{3})*)$", pts_text)
             if match:
                 pts = int(match.group(1).replace(",", ""))
                 log.info(f"  💰 Points: {pts}")
@@ -377,7 +420,7 @@ def check_rewards(page):
         except:
             pass
 
-        # Fallback: cari angka di body text
+        # Fallback
         nums = re.findall(r"(\d{2,})", body)
         for n in nums:
             val = int(n)
@@ -394,96 +437,72 @@ def check_rewards(page):
 
 # ─── Referral Enrollment ────────────────────────────────────
 
-def enroll_or_skip(page):
-    """Cek apakah akun udah enrolled di Rewards.
-    Kalo belum, coba daftar via referral link biar dapet bonus poin.
-    Returns True kalo sudah enrolled, False kalo belum."""
+def enroll_or_skip(driver):
+    """Cek apakah akun udah enrolled di Rewards."""
     try:
-        page.goto('https://rewards.bing.com/', wait_until="load", timeout=45000)
+        driver.get('https://rewards.bing.com/')
         time.sleep(10)
 
-        # Handle OAuth consent page dulu
         oauth_clicks = 0
         for attempt in range(15):
-            cur = page.url
-            cur_title = page.title()
+            cur = driver.current_url
+            cur_title = driver.title()
 
-            # Udah di dashboard rewards!
             if 'rewards.bing.com' in cur and 'welcome' not in cur.lower() and 'signin-oidc' not in cur.lower():
-                has_points = page.locator('[class*="text-pageHeader"]').count() > 0
-                if has_points:
-                    log.info("  ✅ Udah di dashboard rewards (points visible)")
-                else:
+                try:
+                    pts = driver.find_elements(By.CSS_SELECTOR, '[class*="text-pageHeader"]')
+                    if pts:
+                        log.info("  ✅ Udah di dashboard rewards (points visible)")
+                    else:
+                        log.info("  ✅ Udah di dashboard rewards")
+                except:
                     log.info("  ✅ Udah di dashboard rewards")
                 return True
 
-            # Di halaman OAuth — coba klik "Sign in"
             if 'login.live.com' in cur and ('oauth' in cur or 'authorize' in cur):
-                try:
-                    signin_link = page.locator('a:has-text("Sign in")').first
-                    if signin_link.is_visible(timeout=2000):
-                        log.info("  🔑 Klik 'Sign in' di halaman OAuth")
-                        signin_link.click()
-                        time.sleep(8)
-                        oauth_clicks += 1
-                        continue
-                except:
-                    pass
+                if safe_click_text(driver, "Sign in", timeout=2):
+                    log.info("  🔑 Klik 'Sign in' di halaman OAuth")
+                    time.sleep(8)
+                    oauth_clicks += 1
+                    continue
                 if oauth_clicks >= 5:
                     log.info("  ⚠️ OAuth mentok 5x — coba referral enrollment...")
                     break
-                # Coba button Accept/Continue
                 for ct in ['Accept', 'Yes', 'Continue', 'Allow']:
-                    try:
-                        btn = page.locator(f'button:has-text("{ct}"), input[value*="{ct}"]').first
-                        if btn.is_visible(timeout=2000):
-                            btn.click()
-                            log.info(f"  ✅ Klik '{ct}' di consent page")
-                            time.sleep(5)
-                            oauth_clicks += 1
-                            break
-                    except:
-                        continue
+                    if safe_click_text(driver, ct, timeout=2):
+                        log.info(f"  ✅ Klik '{ct}' di consent page")
+                        time.sleep(5)
+                        oauth_clicks += 1
+                        break
                 time.sleep(3)
                 continue
 
             time.sleep(5)
 
-        # === REFERRAL ENROLLMENT ===
+        # Referral enrollment
         log.info("  📝 Coba referral enrollment...")
-        page.goto(REFFERAL_URL, wait_until="load", timeout=45000)
+        driver.get(REFFERAL_URL)
         time.sleep(10)
 
         for btn_text in ['Start earning', 'Join now', 'Join', 'Get started', 'Start', 'Sign up']:
-            try:
-                btn = page.locator(f'button:has-text("{btn_text}"), a:has-text("{btn_text}")').first
-                if btn.is_visible(timeout=3000):
-                    btn.click()
-                    log.info(f"  ✅ Klik '{btn_text}' di halaman referral")
-                    break
-            except:
-                continue
+            if safe_click_text(driver, btn_text, timeout=3):
+                log.info(f"  ✅ Klik '{btn_text}' di halaman referral")
+                break
 
-        # Tunggu OAuth chain setelah klik referral
         time.sleep(5)
         for i in range(15):
             time.sleep(4)
-            cur = page.url
+            cur = driver.current_url
             if 'rewards.bing.com' in cur and 'welcome' not in cur.lower():
                 time.sleep(2)
-                if not page.url.lower().startswith('https://rewards.bing.com/'):
+                if not driver.current_url.lower().startswith('https://rewards.bing.com/'):
                     continue
                 log.info("  ✅ Referral enrollment berhasil!")
                 return True
             if 'login.live.com' in cur and ('oauth' in cur or 'authorize' in cur):
-                try:
-                    sl = page.locator('a:has-text("Sign in")').first
-                    if sl.is_visible(timeout=2000):
-                        sl.click()
-                        time.sleep(8)
-                        continue
-                except:
-                    pass
+                if safe_click_text(driver, "Sign in", timeout=2):
+                    time.sleep(8)
+                    continue
             log.info(f"  ⏳ Tunggu redirect referral... ({cur[:50]})")
 
         log.info("  ⚠️ Referral enrollment gagal — lanjut search aja")
@@ -496,11 +515,10 @@ def enroll_or_skip(page):
 # ─── Main ──────────────────────────────────────────────────
 
 def run_bot():
-    """Jalankan bot untuk semua akun — sekali run."""
     log.info(f"{'=' * 50}")
-    log.info(f"🚀 MS REWARDS BOT — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info(f"🚀 MS REWARDS BOT (Selenium) — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info(f"{'=' * 50}")
-    log.info(f"")
+    log.info("")
 
     config = get_config()
     accounts = config.get("accounts", [])
@@ -511,136 +529,123 @@ def run_bot():
 
     log.info(f"📊 Akun: {len(accounts)}")
     log.info(f"🔍 Desktop: {desktop_target} | Mobile: {mobile_target}")
-    log.info(f"")
+    log.info("")
 
     summary = []
 
-    with sync_playwright() as pw:
-        for idx, acc in enumerate(accounts):
-            email = acc["email"]
-            password = acc["password"]
-            log.info(f"{'─' * 45}")
-            log.info(f"🎯 [{idx + 1}/{len(accounts)}] {email}")
-            log.info(f"{'─' * 45}")
+    for idx, acc in enumerate(accounts):
+        email = acc["email"]
+        password = acc["password"]
+        log.info(f"{'─' * 45}")
+        log.info(f"🎯 [{idx + 1}/{len(accounts)}] {email}")
+        log.info(f"{'─' * 45}")
 
+        # ── Desktop driver ──
+        driver = make_driver("desktop")
+        acc_ok = True
+        account_log = []
+
+        try:
             # ── Login ──
-            result = login(pw, email, password)
-            if not result:
+            if not login(driver, email, password):
                 summary.append(f"❌ {email} — Login gagal")
+                driver.quit()
                 continue
 
-            browser, context, page = result
-            acc_ok = True
-            account_log = []
-
+            # ── Cek enrollment ──
+            enrolled = False
             try:
-                # ── Cek enrollment ──
-                enrolled = False
-                try:
-                    enrolled = enroll_or_skip(page)
-                except Exception as e:
-                    log.warning(f"  ⚠️ Enrollment check error: {e}")
-
-                if not enrolled:
-                    log.warning("  ⚠️ Akun belum enrolled — skip dashboard tasks, langsung search")
-                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
-                    time.sleep(5)
-                else:
-                    account_log.append("Enrolled ✅")
-
-                if enrolled:
-                    # ── Daily set ──
-                    try:
-                        ds = do_daily_set(page)
-                        account_log.append(f"Daily set: {ds}/3")
-                    except Exception as e:
-                        log.warning(f"  ⚠️ Daily set error: {e}")
-                        account_log.append("Daily set: error")
-
-                    # Recover page
-                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
-                    time.sleep(5)
-
-                # ── Desktop Searches ──
-                log.info(f"  🔍 {desktop_target} DESKTOP searches...")
-                desktop_ok = 0
-                for i in range(desktop_target):
-                    q = QUERIES[i % len(QUERIES)]
-                    if do_browser_search(page, q):
-                        desktop_ok += 1
-                    if (i + 1) % 10 == 0:
-                        log.info(f"  [{i + 1}/{desktop_target}] ✓ ({desktop_ok} ok)")
-                    delay = random.uniform(settings.get("min_delay_sec", 10), settings.get("max_delay_sec", 20))
-                    time.sleep(delay)
-                log.info(f"  ✅ Desktop: {desktop_ok}/{desktop_target}")
-                account_log.append(f"Desktop: {desktop_ok}/{desktop_target}")
-
-                # ── Mobile Searches ──
-                context.close()
-                context = browser.new_context(
-                    viewport={"width": 390, "height": 844},
-                    user_agent=(
-                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
-                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 "
-                        "Mobile/15E148 Safari/604.1"
-                    ),
-                    locale="en-US",
-                    is_mobile=True,
-                )
-                page = context.new_page()
-                page.set_default_timeout(30000)
-
-                page.goto("https://www.bing.com/", wait_until="domcontentloaded", timeout=30000)
-                time.sleep(4)
-
-                log.info(f"  📱 {mobile_target} MOBILE searches...")
-                mobile_ok = 0
-                for i in range(mobile_target):
-                    q = QUERIES[(i + desktop_target) % len(QUERIES)]
-                    if do_browser_search(page, q):
-                        mobile_ok += 1
-                    if (i + 1) % 10 == 0:
-                        log.info(f"  [{i + 1}/{mobile_target}] ✓ ({mobile_ok} ok)")
-                    delay = random.uniform(
-                        settings.get("min_delay_sec", 10), settings.get("max_delay_sec", 20)
-                    )
-                    time.sleep(delay)
-                log.info(f"  ✅ Mobile: {mobile_ok}/{mobile_target}")
-                account_log.append(f"Mobile: {mobile_ok}/{mobile_target}")
-
-                # ── Claim ──
-                if enrolled:
-                    page.goto("https://www.bing.com/", wait_until="load", timeout=30000)
-                    time.sleep(5)
-                    try:
-                        cp = claim_points(page)
-                        account_log.append(f"Claim: {'✅' if cp > 0 else 'ℹ️ none'}")
-                    except Exception as e:
-                        log.warning(f"  ⚠️ Claim error: {e}")
-
-                    # ── Cek Points ──
-                    try:
-                        pts = check_rewards(page)
-                        account_log.append(f"Points: {pts}")
-                    except:
-                        pass
-
-                summary.append(f"{'✅' if mobile_ok > 0 else '⚠️'} {email} — {' | '.join(account_log)}")
-
+                enrolled = enroll_or_skip(driver)
             except Exception as e:
-                log.error(f"  ❌ Error akun {email}: {e}")
-                summary.append(f"❌ {email} — Error: {e}")
-            finally:
+                log.warning(f"  ⚠️ Enrollment check error: {e}")
+
+            if not enrolled:
+                log.warning("  ⚠️ Akun belum enrolled — skip dashboard tasks, langsung search")
+                driver.get("https://www.bing.com/")
+                time.sleep(5)
+            else:
+                account_log.append("Enrolled ✅")
+
+            if enrolled:
+                # ── Daily set ──
                 try:
-                    browser.close()
+                    ds = do_daily_set(driver)
+                    account_log.append(f"Daily set: {ds}/3")
+                except Exception as e:
+                    log.warning(f"  ⚠️ Daily set error: {e}")
+                    account_log.append("Daily set: error")
+
+                driver.get("https://www.bing.com/")
+                time.sleep(5)
+
+            # ── Desktop Searches ──
+            log.info(f"  🔍 {desktop_target} DESKTOP searches...")
+            desktop_ok = 0
+            for i in range(desktop_target):
+                q = QUERIES[i % len(QUERIES)]
+                if do_browser_search(driver, q):
+                    desktop_ok += 1
+                if (i + 1) % 10 == 0:
+                    log.info(f"  [{i + 1}/{desktop_target}] ✓ ({desktop_ok} ok)")
+                delay = random.uniform(settings.get("min_delay_sec", 10), settings.get("max_delay_sec", 20))
+                time.sleep(delay)
+            log.info(f"  ✅ Desktop: {desktop_ok}/{desktop_target}")
+            account_log.append(f"Desktop: {desktop_ok}/{desktop_target}")
+
+            # ── Tutup desktop driver, buka mobile ──
+            driver.quit()
+            driver = make_driver("mobile")
+            driver.get("https://www.bing.com/")
+            time.sleep(4)
+
+            # ── Mobile Searches ──
+            log.info(f"  📱 {mobile_target} MOBILE searches...")
+            mobile_ok = 0
+            for i in range(mobile_target):
+                q = QUERIES[(i + desktop_target) % len(QUERIES)]
+                if do_browser_search(driver, q):
+                    mobile_ok += 1
+                if (i + 1) % 10 == 0:
+                    log.info(f"  [{i + 1}/{mobile_target}] ✓ ({mobile_ok} ok)")
+                delay = random.uniform(
+                    settings.get("min_delay_sec", 10), settings.get("max_delay_sec", 20)
+                )
+                time.sleep(delay)
+            log.info(f"  ✅ Mobile: {mobile_ok}/{mobile_target}")
+            account_log.append(f"Mobile: {mobile_ok}/{mobile_target}")
+
+            # ── Claim & Check ──
+            if enrolled:
+                driver.get("https://www.bing.com/")
+                time.sleep(5)
+                try:
+                    cp = claim_points(driver)
+                    account_log.append(f"Claim: {'✅' if cp > 0 else 'ℹ️ none'}")
+                except Exception as e:
+                    log.warning(f"  ⚠️ Claim error: {e}")
+
+                try:
+                    pts = check_rewards(driver)
+                    account_log.append(f"Points: {pts}")
                 except:
                     pass
 
-            # ── Delay antar akun ──
-            if idx < len(accounts) - 1:
-                wait_min = delay_between // 60
-                log.info(f"⏳ Tunggu {wait_min} menit ke akun berikutnya...")
-                time.sleep(delay_between)
+            summary.append(f"{'✅' if mobile_ok > 0 else '⚠️'} {email} — {' | '.join(account_log)}")
+
+        except Exception as e:
+            log.error(f"  ❌ Error akun {email}: {e}")
+            summary.append(f"❌ {email} — Error: {e}")
+        finally:
+            try:
+                driver.quit()
+            except:
+                pass
+
+        # ── Delay antar akun ──
+        if idx < len(accounts) - 1:
+            wait_min = delay_between // 60
+            log.info(f"⏳ Tunggu {wait_min} menit ke akun berikutnya...")
+            time.sleep(delay_between)
 
     # ── Selesai ──
     log.info(f"\n{'=' * 50}")
@@ -650,11 +655,8 @@ def run_bot():
         log.info(f"  {s}")
     log.info(f"{'=' * 50}\n")
 
-    # Simpan ke last_run.log
     write_last_run("\n".join(summary))
 
-
-# ── Entry point ──────────────────────────────────────────
 
 if __name__ == "__main__":
     run_bot()

@@ -29,9 +29,8 @@ cat > ~/.local/share/sv/ms-rewards/run << 'SVEOF'
 exec 2>&1
 cd /data/data/com.termux/files/home/ms-rewards-termux
 
-# Auto-detect Chromium untuk Termux
-if [ -f "$PREFIX/bin/chromium" ] && [ ! -f "$HOME/.cache/ms-playwright/chromium" ]; then
-    export PLAYWRIGHT_BROWSERS_PATH=0
+# Auto-detect Chromium untuk Termux (Selenium)
+if [ -f "$PREFIX/bin/chromium" ] && [ -z "$MS_REWARDS_CHROMIUM_PATH" ]; then
     export MS_REWARDS_CHROMIUM_PATH="$PREFIX/bin/chromium"
 fi
 

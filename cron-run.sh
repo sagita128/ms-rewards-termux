@@ -6,9 +6,8 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-# Auto-detect Chromium untuk Termux
-if [ -f "$PREFIX/bin/chromium" ] && [ ! -f "$HOME/.cache/ms-playwright/chromium" ]; then
-    export PLAYWRIGHT_BROWSERS_PATH=0
+# Auto-detect Chromium untuk Termux (Selenium)
+if [ -f "$PREFIX/bin/chromium" ] && [ -z "$MS_REWARDS_CHROMIUM_PATH" ]; then
     export MS_REWARDS_CHROMIUM_PATH="$PREFIX/bin/chromium"
 fi
 
